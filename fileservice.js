@@ -38,158 +38,137 @@ function handleFileUpload(req, res) {
   }
   //generar ruta y nombre de archivo
   const ff = new Date();
-  let rutaCarpeta = "./adjuntos/" + ff.getFullYear() + "/" + b.tabla_origen + "/";
-  //let fechaActual = ff.getFullYear+(ff.getMonth()+1)+ff.getDate()+"-"+ff.getHours()+
-  let nombreArchivo = b.id_tabla + "_" + Date.now() + ext;
+  let rutaCarpeta = "./adjuntos/" + b.nombre_tabla + "/";
+  let nombreArchivo = b.nombre_registro + "_" + ff + ext;
+  let rutaCompleta = rutaCarpeta+nombreArchivo;
+
   //insertar registro
-  pool.query("SELECT * FROM sp_adjunto('A1',$1,$2,$3,$4,$5,$6)", [b.id_tabla, b.tabla_origen, b.id_usuario, tipo, nombreArchivo, rutaCarpeta], (err, resSql) => {
-    if (err) {
-      console.error('Error al insertar el archivo en la base de datos:', err);
-      return res.status(500).send('Error interno del servidor.');
-    }
-    let id_adjunto = resSql.rows[0].dato[0].id_adjunto;
-    //revision de ruta: 
-    fs.access(rutaCarpeta, function (error) {
-      if (error) { //Directory does not exist
-        console.log("no hay ruta " + rutaCarpeta);
-        fs.mkdirSync(rutaCarpeta);
+  let nombreTabla = b.nombre_tabla;
+  let campoTabla = b.campo_tabla;
+  let idTabla = b.id_en_tabla;
+  let query = `
+    UPDATE ${nombreTabla}
+    SET ${campoTabla} = $1
+    WHERE ${idTabla} = $2
+  `;
+
+  // Ejecuta la consulta con parámetros para los valores
+  pool.query(
+    query, 
+    [rutaCompleta, b.id_registro],
+    (err, res) => {
+      if (err) {
+        console.error('Error al insertar el archivo en la base de datos:', err);
+        return res.status(500).send('Error interno del servidor.');
       }
 
-      let rutaArchivo = rutaCarpeta + nombreArchivo;
-      sampleFile.mv(rutaArchivo, (err) => {
-        if (err) {
-          return res.status(500).send(err);
+      //revision de ruta: 
+      fs.access(rutaCarpeta, function (error) {
+        if(error){ //Directory does not exist
+          console.log("no hay ruta " + rutaCarpeta);
+          fs.mkdirSync(rutaCarpeta);
         }
-        // Guarda información sobre el archivo en la base de datos
-        try {
-          //confirma que el archivo se guardo correctamente
-          pool.query("SELECT * FROM sp_adjunto('M1',$1,$2,$3,$4,$5,$6)", [id_adjunto, null, null, null, null, null], (err, result) => {
-            if (err) {
-              console.error('Error al insertar el archivo en la base de datos:', err);
-              return res.status(500).send('Error interno del servidor.');
-            }
-            return res.status(200).send('Archivo subido correctamente, id_adjunto: '+id_adjunto);
-          });
-        } catch (error) {
-          res.status(500).send(error);
-        }
-      });
-    })
-  });
+
+        let rutaArchivo = rutaCarpeta + nombreArchivo;
+        sampleFile.mv(rutaArchivo, (err) => {
+          if (err) {
+            return res.status(500).send(err);
+          }
+        });
+      })
+    }
+  );
 }
 
 function handleFileDownload(req, res) {
-  var id = req.body.id_adjunto;
-  pool.query("SELECT * FROM sp_adjunto('C2',$1)", [id], (err, resSql) => {
+  var b = req.body;
+
+  let nombreTabla = b.nombre_tabla;
+  let campoTabla = b.campo_tabla;
+  let idTabla = b.id_en_tabla;
+
+  // Construcción de la consulta SQL
+  const query = `
+    SELECT ${idTabla}, ${campoTabla} AS ruta
+    FROM ${nombreTabla}
+    WHERE ${idTabla} = $1
+  `;
+
+  // Consulta para obtener la ruta y el nombre del archivo
+  pool.query(
+    query, 
+    [b.id_registro], 
+    (err, resSql) => {
     if (err) {
+      console.error('Error al consultar la base de datos:', err);
       return res.status(500).send('Error interno del servidor.');
     }
-    let nombre = resSql.rows[0].dato[0].nombre_archivo;
-    let ruta = resSql.rows[0].dato[0].ruta;
-    const filePath = path.join(ruta, nombre);//'./adjuntos/'
-    if (fs.existsSync(filePath)) {
-       // Verifica si el archivo es una imagen (opcional, dependiendo de tus necesidades)
+
+    // Verifica si se encontró el archivo en la base de datos
+    if (resSql.rows.length === 0) {
+      return res.status(404).send('Archivo no encontrado en la base de datos.');
+    }
+
+    const { idTabla: id_tabla, ruta } = resSql.rows[0];
+    const filePath = ruta;
+
+    // Verifica si el archivo existe en el sistema de archivos
+    fs.access(filePath, fs.constants.F_OK, (error) => {
+      if (error) {
+        console.error('Archivo no encontrado en el sistema de archivos:', filePath);
+        return res.status(404).send('Archivo no encontrado.');
+      }
+
+      // Verifica si es una imagen para procesarla
       const imageExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff'];
-      const fileExtension = path.extname(nombre).toLowerCase();
+      const fileExtension = path.extname(filePath).toLowerCase();
 
       if (imageExtensions.includes(fileExtension)) {
-        /*res.download(filePath, nombre, (err) => {
-          if (err) {
-            console.error('Error al descargar el archivo:', err);
-            res.status(500).send('Error al descargar el archivo.');
-          }
-        });*/
         sharp(filePath)
-        .metadata()
-        .then(metadata => {
-          const maxWidth = 800; // Define el ancho máximo deseado
-          const maxHeight = 600; // Define el alto máximo deseado
+          .metadata()
+          .then((metadata) => {
+            const maxWidth = 800;
+            const maxHeight = 600;
 
-          let newWidth = metadata.width;
-          let newHeight = metadata.height;
+            let newWidth = metadata.width;
+            let newHeight = metadata.height;
 
-          // Calcula las nuevas dimensiones manteniendo la proporción
-          if (metadata.width > maxWidth || metadata.height > maxHeight) {
-            const widthRatio = maxWidth / metadata.width;
-            const heightRatio = maxHeight / metadata.height;
-            const minRatio = Math.min(widthRatio, heightRatio);
+            // Calcula las nuevas dimensiones manteniendo la proporción
+            if (metadata.width > maxWidth || metadata.height > maxHeight) {
+              const widthRatio = maxWidth / metadata.width;
+              const heightRatio = maxHeight / metadata.height;
+              const minRatio = Math.min(widthRatio, heightRatio);
 
-            newWidth = Math.round(metadata.width * minRatio);
-            newHeight = Math.round(metadata.height * minRatio);
-          }
+              newWidth = Math.round(metadata.width * minRatio);
+              newHeight = Math.round(metadata.height * minRatio);
+            }
 
-          return sharp(filePath).resize(newWidth, newHeight).toBuffer();
-        })
-        .then(data => {
-          res.set('Content-Type', 'image/' + fileExtension.replace('.', ''));
-          res.send(data);
-        })
-        .catch(err => {
-          console.error('Error al procesar la imagen:', err);
-          res.status(500).send('Error al procesar la imagen.');
-        });
-      } else {
-        // Si no es una imagen, envía el archivo tal como está
+            return sharp(filePath).resize(newWidth, newHeight).toBuffer();
+          })
+          .then((data) => {
+            res.set('Content-Type', 'image/' + fileExtension.replace('.', ''));
+            res.send(data);
+          })
+          .catch((err) => {
+            console.error('Error al procesar la imagen:', err);
+            res.status(500).send('Error al procesar la imagen.');
+          });
+      } 
+      else {
+        // Si no es una imagen, envía el archivo directamente
         res.download(filePath, nombre, (err) => {
           if (err) {
             console.error('Error al descargar el archivo:', err);
             res.status(500).send('Error al descargar el archivo.');
           }
         });
-      }  
-    } else {
-      // Si el archivo no existe, envía un mensaje de error
-      res.status(404).send('Archivo no encontrado.');
-    }
-  });
-}
-
-function handleFileDownload2(req, res) {
-  var id = req.params.id;
-  console.log(req.params);
-  console.log(id);
-  pool.query("SELECT * FROM sp_adjunto('C2',$1)", [id], (err, resSql) => {
-    if (err) {
-      console.log(err);
-      return res.status(500).send('Error interno del servidor.');
-    }
-    let nombre = resSql.rows[0].dato[0].nombre_archivo;
-    let ruta = resSql.rows[0].dato[0].ruta;
-    const filePath = path.join(ruta, nombre);//'./adjuntos/'
-    if (fs.existsSync(filePath)) {
-       // Verifica si el archivo es una imagen (opcional, dependiendo de tus necesidades)
-      const imageExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff'];
-      const fileExtension = path.extname(nombre).toLowerCase();
-
-      if (imageExtensions.includes(fileExtension)) {
-        res.download(filePath, nombre, (err) => {
-          if (err) {
-            console.error('Error al descargar el archivo:', err);
-            res.status(500).send('Error al descargar el archivo.');
-          }
-        });
-        
-      } else {
-        // Si no es una imagen, envía el archivo tal como está
-        res.download(filePath, nombre, (err) => {
-          if (err) {
-            console.error('Error al descargar el archivo:', err);
-            res.status(500).send('Error al descargar el archivo.');
-          }
-        });
-      }  
-    } else {
-      // Si el archivo no existe, envía un mensaje de error
-      res.status(404).send('Archivo no encontrado.');
-    }
+      }
+    });
   });
 }
 
 module.exports = {
-  uploadMiddleware
-  ,handleFileUpload
-  ,handleFileDownload
-  ,handleFileDownload2
-  //uploadFile
-  //,insertFileRecord
+  uploadMiddleware,
+  handleFileUpload,
+  handleFileDownload
 };
