@@ -36,48 +36,58 @@ function handleFileUpload(req, res) {
   else{
     return res.status(400).send('Extension no soportada.');
   }
+  //===============
+  //primero guardamos el archivo, y si guardo correctamente actualizamos el registro
+  //=================
+
   //generar ruta y nombre de archivo
   const ff = new Date();
+  fechaMilisec = ff.getTime();
   let rutaCarpeta = "./adjuntos/" + b.nombre_tabla + "/";
-  let nombreArchivo = b.nombre_registro + "_" + ff + ext;
+  let nombreArchivo = b.nombre_registro + "_" + fechaMilisec + ext;
   let rutaCompleta = rutaCarpeta+nombreArchivo;
+  
+  fs.access(rutaCarpeta, function (error) { //revisa si existe la carpeta de guardado del archivo 
+    if(error){
+      console.log("no existe la ruta de destino. Creando ruta: " + rutaCarpeta);
+      fs.mkdirSync(rutaCarpeta);
+    }
 
-  //insertar registro
-  let nombreTabla = b.nombre_tabla;
-  let campoTabla = b.campo_tabla;
-  let idTabla = b.id_en_tabla;
-  let query = `
-    UPDATE ${nombreTabla}
-    SET ${campoTabla} = $1
-    WHERE ${idTabla} = $2
-  `;
-
-  // Ejecuta la consulta con parámetros para los valores
-  pool.query(
-    query, 
-    [rutaCompleta, b.id_registro],
-    (err, res) => {
+    let rutaArchivo = rutaCarpeta + nombreArchivo;
+    sampleFile.mv(rutaArchivo, (err) => {
       if (err) {
-        console.error('Error al insertar el archivo en la base de datos:', err);
-        return res.status(500).send('Error interno del servidor.');
+        return res.status(500).json({
+          success: false,
+          message: err,
+        });
       }
 
-      //revision de ruta: 
-      fs.access(rutaCarpeta, function (error) {
-        if(error){ //Directory does not exist
-          console.log("no hay ruta " + rutaCarpeta);
-          fs.mkdirSync(rutaCarpeta);
-        }
-
-        let rutaArchivo = rutaCarpeta + nombreArchivo;
-        sampleFile.mv(rutaArchivo, (err) => {
+      //si el archivo se guardo correctamente, procedemos a guardar el registro
+      let nombreTabla = b.nombre_tabla;
+      let campoTabla = b.campo_tabla;
+      let idTabla = b.id_en_tabla;
+      let query = `UPDATE ${nombreTabla} SET ${campoTabla} = $1 WHERE ${idTabla} = $2`;
+      let query1 = `UPDATE ${nombreTabla} SET ${campoTabla} = '`+rutaCompleta+`' WHERE ${idTabla} = `+b.id_registro;
+      console.log(query1);
+      
+      // Ejecuta la consulta con parámetros para los valores
+      pool.query(query1,(err, resQ) => { //insertar registro
           if (err) {
-            return res.status(500).send(err);
+            console.error('Error al insertar el archivo en la base de datos:', err);
+            return res.status(500).json({
+              success: false,
+              message: 'Error interno del servidor.',
+            });
+          }
+          else{
+            return res.status(200).json({
+              success: true,
+              message: 'Archivo guardado correctamente.',
+            });
           }
         });
-      })
-    }
-  );
+    });
+  });
 }
 
 function handleFileDownload(req, res) {
@@ -93,12 +103,10 @@ function handleFileDownload(req, res) {
     FROM ${nombreTabla}
     WHERE ${idTabla} = $1
   `;
+  console.log(query,b.id_registro);
 
   // Consulta para obtener la ruta y el nombre del archivo
-  pool.query(
-    query, 
-    [b.id_registro], 
-    (err, resSql) => {
+  pool.query(query, [b.id_registro], (err, resSql) => {
     if (err) {
       console.error('Error al consultar la base de datos:', err);
       return res.status(500).send('Error interno del servidor.');
@@ -155,6 +163,7 @@ function handleFileDownload(req, res) {
           });
       } 
       else {
+        nombre= b.nombre_tabla+"_"+b.id_registro;
         // Si no es una imagen, envía el archivo directamente
         res.download(filePath, nombre, (err) => {
           if (err) {
