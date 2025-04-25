@@ -73,27 +73,29 @@ function generarQuery(req) {
   return q;
 }
 
-const getSP = (request, response) => {
-  if(request.headers['ip']==null || request.headers['ip']=='' ){
-      var msg="ERROR: falta ip, debe incluir este parametro en el header";
-      response.status(500).json(msg);
-      return;
+const getSP = async (request, response) => {
+  if (!request.headers['ip'] || request.headers['ip']=='' ) {
+    const msg = "ERROR: falta ip, debe incluir este parámetro en el header";
+    response.status(500).json(msg);
+    return;
   }
 
-  console.log(request.headers);
-  var query = generarQuery(request);
-  console.log(query);
-  pool.query(query, (error, results) => {
-    if (error) {
-      console.log(error);
-      var x = "DB query error: "+error.toString();
-      console.log("DB query error: ", x);
-      response.status(200).json(x);
-      return;
-    }
-    response.status(200).json(results.rows)
-  })
-}
+  //console.log(request.headers);
+  const query = generarQuery(request);
+  //console.log(query);
+
+  let client;
+  try {
+    client = await pool.connect(); // Obtiene una conexión del pool
+    const results = await client.query(query); // Ejecuta la consulta
+    response.status(200).json(results.rows);
+  } catch (error) {
+    console.error("DB query error:", error);
+    response.status(500).json({ error: error.toString() });
+  } finally {
+    if (client) client.release(); // Libera la conexión SIEMPRE, incluso si hay error
+  }
+};
 
 const upload = (request, response) => {
   var query = generarQuery(request);
