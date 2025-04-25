@@ -80,9 +80,9 @@ const getSP = async (request, response) => {
     return;
   }
 
-  console.log(request.headers);
+  //console.log(request.headers);
   const query = generarQuery(request);
-  console.log(query);
+  //console.log(query);
 
   let client;
   try {

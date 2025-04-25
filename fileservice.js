@@ -235,7 +235,7 @@ async function exportarDatos(req, res) {
 }
 
 async function importarDatos(req, res) {
-  console.log("importarDatos");
+  //console.log("importarDatos");
 
   if (!req.files || Object.keys(req.files).length === 0) {
     return res.status(400).send('Archivo no encontrado.');
@@ -250,24 +250,41 @@ async function importarDatos(req, res) {
       return res.status(500).send('Error al mover el archivo');
     }
     try {
-      const workbook = XLSX.readFile(uploadPath);
-      console.log(workbook.length);
-      
-      const sheetName = workbook.SheetNames[0]; //Lee la primera hoja del Excel
-      // Obtener los nombres de las hojas
-    const sheetNames = workbook.SheetNames;
+        const workbook = XLSX.readFile(uploadPath);
+        // Obtener los nombres de las hojas
+        const sheetNames = workbook.SheetNames;
+        id_proy_beneficiario = req.body.id_proy_beneficiario;
+        // Verificar cuántas hojas hay
+        console.log(`El archivo tiene ${sheetNames.length} hojas.`);
+        if(workbook.SheetNames.length > 1){
+            res.status(200).json({ res: "ERROR", message: "Existe mas de una hoja de trabajo, por favor revise su documento." });
+        }
+        const sheetName = workbook.SheetNames[0]; //Lee la primera hoja del Excel
+        const worksheet = workbook.Sheets[sheetName];
+        const sheetData = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName]);
+        
+        const sheetDataCabecera = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+        const cabeceraActual = sheetDataCabecera[0];
+        const cabeceraEsperada = ['ci', 'nombre', 'genero', 'tipo_actor', 'institucion',
+        'departamento', 'municipio', 'comunidad', 'comunidad_no_registrada', 'rango_edad'];
 
-    // Verificar cuántas hojas hay
-    console.log(`El archivo tiene ${sheetNames.length} hojas.`);
-    if(workbook.SheetNames.length > 1){
-      res.status(200).json({ res: "ERROR", message: "Existe mas de una hoja de trabajo, por favor revise su documento." });
-    }
-      const sheetData = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName]);
-      id_proy_beneficiario = req.body.id_proy_beneficiario;
-
-      if (sheetData[0].ci == null || sheetData[0].nombre == null || sheetData[0].genero == null || sheetData[0].tipo_actor == null || sheetData[0].institucion == null || sheetData[0].departamento == null || sheetData[0].municipio == null || sheetData[0].comunidad == null || sheetData[0].comunidad_no_registrada == null || sheetData[0].rango_edad == null) {
-        res.status(200).json({ res: "ERROR", message: "Los nombres cabeceras no coinciden, por favor revise el documento ejemplo (archivo exportado)." });
-      }
+        // Validar que todas las cabeceras esperadas existan en la cabecera actual
+        const setCabeceraActual = new Set(cabeceraActual); // Convertir a conjunto
+        const setCabeceraEsperada = new Set(cabeceraEsperada); // Convertir a conjunto
+    
+        const faltantes = [...setCabeceraEsperada].filter(cabecera => !setCabeceraActual.has(cabecera));
+        const adicionales = [...setCabeceraActual].filter(cabecera => !setCabeceraEsperada.has(cabecera));
+    
+        if (faltantes.length > 0 || adicionales.length > 0) {
+            return res.status(200).json({
+                res: "ERROR",
+                message: "Las cabeceras no coinciden.",
+                cabeceras_faltantes: faltantes,
+                cabeceras_adicionales: adicionales
+            });
+        }
+            
+        
 
       validarDatos(sheetData, id_proy_beneficiario).then(async resVal => {
         console.log("validarDatos:", resVal);
@@ -275,7 +292,7 @@ async function importarDatos(req, res) {
 
         // Verificar si hay errores en los datos
         if (resVal.length > 0) {
-          res.status(200).send(resVal);
+          res.status(200).json({res:"ERROR",message:resVal});
         }
         else {
           const res_guardado = await guardar(sheetData, id_proy_beneficiario);
@@ -367,79 +384,76 @@ async function insertar_beneficiario(row, id_proy_beneficiario) {
 
 const validarDatos = async (sheetData, id_proy_beneficiario) => {
   try {
-    //console.log("validar 1");
-    
     const beneficiarios_existentes = await obtener_beneficiarios_existentes(id_proy_beneficiario);
-    //console.log("beneficiarios_existentes",beneficiarios_existentes);
-    
     const actores = await obtener_tipo_actor();
-    //console.log("actores",actores);
     const tipo_institucion = await obtener_tipo_institucion();
     const departamento = await obtener_tipo_departamento();
     const municipio = await obtener_tipo_municipio();
     const comunidad = await obtener_tipo_comunidad();
     const rango_edad = await obtener_rango_edad();
 
-
-    
     const errores = [];
     for (const [index, row] of sheetData.entries()) {
       const fila = index + 1;
-      console.log("fila",row);
-      
+
       // Validar que el campo "ci" no esté vacío
       if (!row.ci) {
-        errores.push(`Fila ${fila}: El campo "ci" es obligatorio.`);
+        errores.push(`Fila ${fila}: El campo "ci" es obligatorio.\n`);
       }
 
-      if (beneficiarios_existentes != null && beneficiarios_existentes.length > 0) {
-        // Validar que el CI no exista en la base de datos
-        //console.log(`fila ${index + 1} beneficiarios_existentes`,beneficiarios_existentes);
-        //console.log(`fila ${index + 1} row.ci`,row.ci);
+      if(beneficiarios_existentes!=null && beneficiarios_existentes.length>0){
+        // Validar que el campo "ci" no esté en beneficiarios_existentes
         for (let i = 0; i < beneficiarios_existentes.length; i++) {
           if (beneficiarios_existentes[i].num_doc_identidad == row.ci) {
-            errores.push(`Fila ${fila}: El CI "${row.ci}" ya existe.`);
+            errores.push(`Fila ${fila}: El CI "${row.ci}" ya existe.\n`);
           }
         }
       }
 
       // Validar que el campo "nombre" no esté vacío
       if (!row.nombre) {
-        errores.push(`Fila ${index + 1}: El campo "nombre" es obligatorio.`);
+        errores.push(`Fila ${index + 1}: El campo "nombre" es obligatorio.\n`);
       }
 
       const actoresFiltrados = actores.filter(item => item.descripcion_subtipo.trim().toLowerCase() === row.tipo_actor.trim().toLowerCase());
       if (actoresFiltrados.length != 1) {
-        errores.push(`Fila ${fila}: El tipo de actor "${row.tipo_actor}" no existe.`);
+        errores.push(`Fila ${fila}: El tipo de actor "${row.tipo_actor}" no existe.\n`);
       }
-      else {
+      else{
         row.id_tipo_actor = actoresFiltrados[0].id_subtipo;
       }
-
-
-      // Validar rango de edad
-      const rangoFiltrado = rango_edad.filter(item => item.descripcion_subtipo.trim().toLowerCase() === row.rango_edad.trim().toLowerCase());
-      if (rangoFiltrado.length !== 1) {
-        errores.push(`Fila ${fila}: El rango de edad "${row.rango_edad}" no existe.`);
-      } else {
-        row.id_rango_edad = rangoFiltrado[0].id_subtipo;
+      
+      if (row.rango_edad) {
+          // Validar rango de edad
+          const rangoFiltrado = rango_edad.filter(item => item.descripcion_subtipo.trim().toLowerCase() === row.rango_edad.trim().toLowerCase());
+          if (rangoFiltrado.length !== 1) {
+            errores.push(`Fila ${fila}: El rango de edad "${row.rango_edad}" no existe.\n`);
+          } else {
+            row.id_rango_edad = rangoFiltrado[0].id_subtipo;
+          }
       }
-
-      // Validar tipo de institución
-      const institucionFiltrada = tipo_institucion.filter(item => item.descripcion_subtipo.trim().toLowerCase() === row.institucion.trim().toLowerCase());
-      if (institucionFiltrada.length !== 1) {
-        errores.push(`Fila ${fila}: El tipo de institución "${row.institucion}" no existe.`);
-      } else {
-        row.id_tipo_institucion = institucionFiltrada[0].id_subtipo;
+      else {
+         errores.push(`Fila ${index + 1}: El campo "rango_edad" es obligatorio.\n`);
+      }
+      
+      if (row.institucion) {
+          // Validar tipo de institución
+          const institucionFiltrada = tipo_institucion.filter(item => item.descripcion_subtipo.trim().toLowerCase() === row.institucion.trim().toLowerCase());
+          if (institucionFiltrada.length !== 1) {
+            errores.push(`Fila ${fila}: El tipo de institución "${row.institucion}" no existe.\n`);
+          } else {
+            row.id_tipo_institucion = institucionFiltrada[0].id_subtipo;
+          }
+      }
+      else {
+        row.institucion = null;
       }
 
       //validar que row.departamento no sea vacio
-      console.log("row.dep", row.departamento);
-      
       if (row.departamento) {
         const deptoFiltrado = departamento.filter(item => item.nombre.trim().toLowerCase() === row.departamento.trim().toLowerCase());
         if (deptoFiltrado.length !== 1) {
-          errores.push(`Fila ${fila}: El departamento "${row.departamento}" no existe.`);
+          errores.push(`Fila ${fila}: El departamento "${row.departamento}" no existe.\n`);
         } else {
           row.id_departamento = deptoFiltrado[0].id_ubica_geo;
         }
@@ -452,7 +466,7 @@ const validarDatos = async (sheetData, id_proy_beneficiario) => {
       if (row.municipio) {
         const munFiltrado = municipio.filter(item => item.nombre.trim().toLowerCase() === row.municipio.trim().toLowerCase());
         if (munFiltrado.length !== 1) {
-          errores.push(`Fila ${fila}: El municipio "${row.municipio}" no existe.`);
+          errores.push(`Fila ${fila}: El municipio "${row.municipio}" no existe.\n`);
         } else {
           row.id_municipio = munFiltrado[0].id_ubica_geo;
         }
@@ -462,11 +476,11 @@ const validarDatos = async (sheetData, id_proy_beneficiario) => {
       }
 
       // validar que row.comunidad no sea vacio
-      if (row.municipio) {
+      if (row.comunidad) {
         // Validar comunidad
         const comFiltrada = comunidad.filter(item => item.nombre.trim().toLowerCase() === row.comunidad.trim().toLowerCase());
         if (comFiltrada.length !== 1) {
-          errores.push(`Fila ${fila}: La comunidad "${row.comunidad}" no existe.`);
+          errores.push(`Fila ${fila}: La comunidad "${row.comunidad}" no existe.\n`);
         } else {
           row.id_comunidad = comFiltrada[0].id_ubica_geo;
         }
@@ -475,10 +489,9 @@ const validarDatos = async (sheetData, id_proy_beneficiario) => {
         row.id_comunidad = null;
       }
 
-
       // Validar que el campo "genero" sea  o M o F
       if (row.genero !== 'M' && row.genero !== 'F') {
-        errores.push(`Fila ${index + 1}: El campo "genero" debe ser "M" o "F".`);
+        errores.push(`Fila ${index + 1}: El campo "genero" debe ser "M" o "F".\n`);
       }
     }
     return errores;
